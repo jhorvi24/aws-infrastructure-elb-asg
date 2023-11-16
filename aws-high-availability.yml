@@ -1,0 +1,470 @@
+#AWS infrastructure High Availability and High Scaling
+
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description:
+  This template deploys the architecture with one VPC, two public subnets and two private subnets
+
+Parameters:
+ 
+  VpcCIDR:
+    Type: String
+    Default: 172.16.0.0/16
+  
+  PublicSubnetAIP:
+    Type: String
+    Default: 172.16.1.0/24
+
+  PublicSubnetBIP:
+    Type: String
+    Default: 172.16.2.0/24
+  
+  PrivateSubnetAIP:
+    Type: String
+    Default: 172.16.3.0/24
+  
+  PrivateSubnetBIP:
+    Type: String
+    Default: 172.16.4.0/24
+
+
+Resources:
+  
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 
+        Ref: VpcCIDR
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: VPC-WEB-SERVER-CAFE
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 
+        Ref: PublicSubnetAIP
+      Tags:
+        - Key: Name
+          Value: PublicSubnetA 
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 
+        Ref: PublicSubnetBIP
+      Tags:
+        - Key: Name
+          Value: PublicSubnetB 
+  
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 
+        Ref: PrivateSubnetAIP
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetA 
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 
+        Ref: PrivateSubnetBIP
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetB
+##Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IG_WSC
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: 
+        Ref: InternetGateway
+      VpcId: 
+        Ref: VPC
+  
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: Public_Routes
+  
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: 
+        Ref: InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: PublicRouteTable
+      SubnetId: 
+        Ref: PublicSubnetA
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: PublicRouteTable
+      SubnetId: 
+        Ref: PublicSubnetB
+
+  #Nat Gateway
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt AipELASTIC.AllocationId
+      SubnetId:
+        Ref: PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: NatGatewayA-subnetPublicA
+
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt BipELASTIC.AllocationId
+      SubnetId:
+        Ref: PublicSubnetB
+      Tags:
+        - Key: Name
+          Value: NatGatewayA-subnetPublicB
+
+  ##Elastic IP
+  AipELASTIC:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain:
+        Ref: VPC
+      Tags: 
+        - Key: Name
+          Value: EIP-nwA
+  
+  BipELASTIC:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain:
+        Ref: VPC
+      Tags: 
+        - Key: Name
+          Value: EIP-nwB
+
+#Route tables for NatGateway
+  RouteTableNatGatewayA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: Route-NW-A
+  
+  RouteTableNatGatewayB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: Route-NW-B
+
+  ##Route for the two Natgateway
+  PublicRouteNgA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: RouteTableNatGatewayA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: 
+        Ref: NatGatewayA
+
+  PublicRouteNgAB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: RouteTableNatGatewayB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: 
+        Ref: NatGatewayB
+  
+  ##Associate the route tables to subnets
+  NWARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: RouteTableNatGatewayA
+      SubnetId: 
+        Ref: PrivateSubnetA
+
+  NWBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: RouteTableNatGatewayB
+      SubnetId: 
+        Ref: PrivateSubnetB
+
+  #Create the SG for instance
+  SGcafeWeb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow connection through SSH and HTTP
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sg-cafe-ws
+      VpcId:
+        Ref: VPC
+
+  #Create the SG for instance in subnet private
+  SGcafePrivate:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow connection through SSH and HTTP for instance un subnet private
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sg-cafe-private
+      VpcId:
+        Ref: VPC
+  
+  SGdb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow connection through SSH and MYSQL for DB in subnet private
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sg-db
+      VpcId:
+        Ref: VPC
+
+  #Create the instance
+  CafeWSpublic:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-east-1a
+      ImageId: ami-0e8a34246278c21e4
+      InstanceType: t2.micro
+      IamInstanceProfile: LabInstanceProfile
+      KeyName: vockey
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId:
+            Ref: PublicSubnetA
+          GroupSet:
+            - Ref: SGcafeWeb        
+      Tags:
+        - Key: Name
+          Value: cafe-ws-public
+      UserData: 
+        Fn::Base64: !Sub | 
+          #!/bin/bash
+          sudo yum update -y
+          sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+          sudo yum install -y httpd mariadb-server
+          sudo service httpd start
+          sudo service mariadb start
+          sudo chkconfig httpd on
+          sudo chkconfig mariadb on
+          sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/setup.tar.gz
+          sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/db.tar.gz
+          sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/cafe.tar.gz
+          sudo tar -zxvf cafe.tar.gz
+          sudo tar -zxvf setup.tar.gz
+          sudo tar -zxvf db.tar.gz
+          sudo mv db setup /home/ec2-user
+          sudo mv cafe /var/www/html
+
+  ##Create a launch Template
+  LaunchTemplateCoffe:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile: 
+          Name: LabInstanceProfile   
+        ImageId: ami-0e8a34246278c21e4
+        KeyName: vockey
+        InstanceType: t2.micro
+        SecurityGroupIds: 
+          - Ref: SGcafePrivate
+        UserData:
+          Fn::Base64: !Sub | 
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+            sudo yum install -y httpd mariadb-server
+            sudo service httpd start
+            sudo service mariadb start
+            sudo chkconfig httpd on
+            sudo chkconfig mariadb on
+            sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/setup.tar.gz
+            sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/db.tar.gz
+            sudo wget https://aws-tc-largeobjects.s3-us-west-2.amazonaws.com/ILT-TF-200-ACACAD-20-EN/mod4-challenge/cafe.tar.gz
+            sudo tar -zxvf cafe.tar.gz
+            sudo tar -zxvf setup.tar.gz
+            sudo tar -zxvf db.tar.gz
+            sudo mv db setup /home/ec2-user
+            sudo mv cafe /var/www/html
+      LaunchTemplateName: lt-coffe 
+
+  ##Create the Application Load Balancer
+  ALBcafe:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: alb-cafe
+      Scheme: internet-facing
+      SecurityGroups: 
+        - Ref: SGcafeWeb
+      Subnets: 
+        - Ref: PublicSubnetA
+        - Ref: PublicSubnetB 
+      Type: application
+
+  #Create the target group
+  TGelb:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckPath: /index.html
+      Name: tg-wscoffe
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: 
+        Ref: VPC
+
+  #Create a listener for ALB
+  ListenerALB:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: 
+        Ref: ALBcafe
+      Port: 80
+      Protocol: HTTP 
+      DefaultActions:
+        - Type: forward 
+          TargetGroupArn: 
+            Ref: TGelb  
+  
+  #Create the Auto Scaling group
+  ASGcoffe:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: asg-cafe
+      DesiredCapacity: 2
+      MaxSize: 4
+      MinSize: 2
+      LaunchTemplate: 
+        LaunchTemplateId: 
+          Ref: LaunchTemplateCoffe          
+        Version: !GetAtt LaunchTemplateCoffe.LatestVersionNumber
+      TargetGroupARNs: 
+        - Ref: TGelb
+      VPCZoneIdentifier: 
+        - Ref: PrivateSubnetA
+        - Ref: PrivateSubnetB
+
+  #Create the Scaling policy
+  ScalingPolicyASG:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: 
+        Ref: ASGcoffe
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration: 
+        PredefinedMetricSpecification: 
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 75
+
+  ##Create the databases
+  DBcoffe:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      AvailabilityZone: us-east-1a
+      DBInstanceIdentifier: dbcafe
+      DBInstanceClass: db.t3.micro
+      DBName: dbcafe
+      DBSubnetGroupName: 
+        Ref: DBcoffeSubnetGroup
+      Engine: mariadb
+      VPCSecurityGroups:
+        - Ref: SGdb
+      MasterUsername: root
+      MasterUserPassword: Re:Start!9
+
+  ##Create the subnets
+  DBcoffeSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets about db
+      DBSubnetGroupName: db-subnet-group-db
+      SubnetIds:
+        - Ref: PrivateSubnetA
+        - Ref: PrivateSubnetB
+
+
+Outputs:
+  NGAEIP:
+    Description: EIP of the NATGateway A
+    Value: 
+      Ref: AipELASTIC
+  
+  CafeWSpublicDNS:
+    Description: Public IP of the instance in the public subnet 
+    Value: !GetAtt CafeWSpublic.PublicDnsName
